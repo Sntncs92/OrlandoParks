@@ -148,7 +148,7 @@ def main():
             print("✅ Monitorización de todos los parques finalizada.")
             break
 
-        time.sleep(300)  # Esperar 5 minutos
+        time.sleep(900)  # Esperar 15 minutos
 
 if __name__ == "__main__":
     main()
