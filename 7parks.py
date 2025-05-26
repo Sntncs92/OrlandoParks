@@ -1,12 +1,9 @@
 import requests
 import csv
-import schedule
-import time
 from datetime import datetime
 from zoneinfo import ZoneInfo
+import os
 
-# Zona horaria de Nueva York para coherencia con horarios del parque
-zona_est = ZoneInfo("America/New_York")
 
 # Configuración de cada parque: URL y horario de monitorización (hora inicio y fin)
 PARKS = [
@@ -15,140 +12,143 @@ PARKS = [
         "url": "https://api.themeparks.wiki/v1/entity/89db5d43-c434-4097-b71f-f6869f495a22/live",
         "start_hour": 8,
         "end_hour": 18,
-        "running": True
+        "running": True,
+        "timezone": "America/New_York",
     },
     {
         "name": "EPCOT",
         "url": "https://api.themeparks.wiki/v1/entity/e957da41-3552-4cf6-b636-5babc5cbc4e5/live",
         "start_hour": 9,
         "end_hour": 21,
-        "running": True
+        "running": True,
+        "timezone": "America/New_York",
     },
     {
         "name": "HollywoodStudios",
         "url": "https://api.themeparks.wiki/v1/entity/e957da41-3552-4cf6-b636-5babc5cbc4e5/live",
         "start_hour": 9,
         "end_hour": 21,
-        "running": True
+        "running": True,
+        "timezone": "America/New_York",
     },
     {
         "name": "MagicKingdom",
         "url": "https://api.themeparks.wiki/v1/entity/e957da41-3552-4cf6-b636-5babc5cbc4e5/live",
         "start_hour": 9,
         "end_hour": 22,
-        "running": True
+        "running": True,
+        "timezone": "America/New_York",
     },
     {
         "name": "UniversalStudios",
         "url": "https://api.themeparks.wiki/v1/entity/89db5d43-c434-4097-b71f-f6869f495a22/live",
         "start_hour": 9,
         "end_hour": 21,
-        "running": True
+        "running": True,
+        "timezone": "America/New_York",
     },
     {
         "name": "IslandAdventure",
         "url": "https://api.themeparks.wiki/v1/entity/89db5d43-c434-4097-b71f-f6869f495a22/live",
         "start_hour": 9,
         "end_hour": 22,
-        "running": True
+        "running": True,
+        "timezone": "America/New_York",
     },
     {
         "name": "EpicUniverse",
         "url": "https://api.themeparks.wiki/v1/entity/89db5d43-c434-4097-b71f-f6869f495a22/live",
         "start_hour": 9,
         "end_hour": 22,
-        "running": True
+        "running": True,
+        "timezone": "America/New_York",
     }
 ]
 
-def en_horario(start_hour, end_hour, now):
-    hora = now.hour
-    if start_hour < end_hour:
-        return start_hour <= hora < end_hour
+def dentro_de_horario(start, end, now):
+    h = now.hour
+    if start < end:
+        return start <= h < end
     else:
-        # Cruza medianoche
-        return hora >= start_hour or hora < end_hour
+        return h >= start or h < end
 
-def obtener_tiempos(parque):
-    url = parque["url"]
-    nombre_parque = parque["name"]
-
-    # Fecha con formato YYYY-MM-DD con zona horaria EST (Nueva York)
-    now = datetime.now(tz=zona_est)
+def procesar_parque(park):
+    tz = ZoneInfo(park["timezone"])
+    now = datetime.now(tz)
     fecha_str = now.strftime("%Y-%m-%d")
-    csv_file = f"{nombre_parque}_{fecha_str}.csv"
+    csv_file = f'{park["name"]}_{fecha_str}.csv'
 
-    try:
-        response = requests.get(url)
-        response.raise_for_status()
-        data = response.json()
-    except Exception as e:
-        print(f"Error al obtener datos de {nombre_parque}: {e}")
-        return
+    if dentro_de_horario(park["start_hour"], park["end_hour"], now):
+        # Dentro del horario, obtener y guardar datos
+        try:
+            response = requests.get(park["url"])
+            response.raise_for_status()
+            data = response.json()
+        except Exception as e:
+            print(f"Error al obtener datos de {park['name']}: {e}")
+            return
 
-    timestamp = now.strftime("%Y-%m-%d %H:%M")
+        timestamp = now.strftime("%Y-%m-%d %H:%M")
 
-    nuevas_filas = []
+        filas = []
+        for ride in data.get("liveData", []):
+            if ride.get("entityType") != "ATTRACTION":
+                continue
+            if ride.get("status") != "OPERATING":
+                continue
+            name = ride.get("name", "Sin nombre")
+            wait = ride.get("queue", {}).get("STANDBY", {}).get("waitTime", "Sin datos")
+            filas.append([timestamp, "ATTRACTION", name, wait])
 
-    for ride in data.get("liveData", []):
-        if ride.get("entityType") != "ATTRACTION":
-            continue
-        if ride.get("status") != "OPERATING":
-            continue
-        name = ride.get("name", "Sin nombre")
-        queue = ride.get("queue", {})
-        standby = queue.get("STANDBY")
-        wait = standby.get("waitTime") if standby else None
-        nuevas_filas.append([timestamp, ride.get("entityType", ""), name, wait if wait is not None else "Sin datos"])
+        if filas:
+            # Crear archivo con cabecera si no existe
+            if not os.path.exists(csv_file):
+                with open(csv_file, "w", newline="", encoding="utf-8") as f:
+                    writer = csv.writer(f)
+                    writer.writerow(["FechaHora", "Tipo", "Nombre", "Espera"])
 
-    if not nuevas_filas:
-        print(f"No hay datos válidos para {nombre_parque} a las {timestamp}")
-        return
+            with open(csv_file, "a", newline="", encoding="utf-8") as f:
+                writer = csv.writer(f)
+                writer.writerows(filas)
+            print(f"{park['name']}: Guardadas {len(filas)} filas a las {timestamp}")
+        else:
+            print(f"{park['name']}: No hay atracciones operativas en este momento.")
 
-    # Crear archivo y cabecera si no existe
-    try:
-        with open(csv_file, "x", newline="", encoding="utf-8") as f:
-            writer = csv.writer(f)
-            writer.writerow(["FechaHora", "Tipo", "Nombre", "Espera"])
-    except FileExistsError:
-        pass
+    else:
+        # Fuera del horario, solo generar resumen si hay datos guardados
+        if not os.path.exists(csv_file):
+            print(f"{park['name']}: No hay datos aún hoy, no se genera resumen.")
+            return
 
-    with open(csv_file, "a", newline="", encoding="utf-8") as f:
-        writer = csv.writer(f)
-        writer.writerows(nuevas_filas)
+        try:
+            with open(csv_file, newline="", encoding="utf-8") as f:
+                reader = csv.reader(f)
+                next(reader)  # saltar cabecera
+                datos = list(reader)
+        except Exception as e:
+            print(f"Error leyendo CSV de {park['name']}: {e}")
+            return
 
-    print(f"✅ {len(nuevas_filas)} registros guardados para {nombre_parque} a las {timestamp}")
+        if len(datos) == 0:
+            print(f"{park['name']}: Archivo CSV vacío, no se genera resumen.")
+            return
+
+        atracciones = [row for row in datos if row[1] == "ATTRACTION"]
+        esperas = [int(row[3]) for row in atracciones if row[3].isdigit()]
+
+        print(f"\n{park['name']} - Resumen del día {fecha_str}")
+        print("-----------------------------------")
+        print(f"Total registros: {len(datos)}")
+        print(f"Atracciones registradas: {len(atracciones)}")
+        if esperas:
+            print(f"Espera media (min): {sum(esperas) / len(esperas):.2f}")
+        else:
+            print("Sin datos de espera válidos")
+        print("-----------------------------------\n")
 
 def main():
-    resumen_generado = {parque["name"]: False for parque in PARKS}
-    finalizados = {parque["name"]: False for parque in PARKS}
-
-    while True:
-        now = datetime.now(tz=zona_est)
-
-        for parque in PARKS:
-            nombre = parque["name"]
-            if finalizados[nombre]:
-                continue
-
-            if en_horario(parque["start_hour"], parque["end_hour"], now):
-                resumen_generado[nombre] = False
-                obtener_tiempos(parque)
-            else:
-                # Solo generar resumen si no se ha hecho y la hora está fuera de rango tras la jornada
-                if not resumen_generado[nombre]:
-                    print(f"\n📊 Resumen final para {nombre} ({now.strftime('%Y-%m-%d')})")
-                    # Aquí podrías agregar función para leer CSV y hacer resumen, si quieres
-                    resumen_generado[nombre] = True
-                    finalizados[nombre] = True
-                    print(f"🛑 Monitorización finalizada para {nombre}\n")
-
-        # Si todos los parques han finalizado, termina el script
-        if all(finalizados.values()):
-            print("✅ Monitorización de todos los parques finalizada.")
-            break
-
-        time.sleep(900)  # Esperar 15 minutos
+    for park in parks:
+        procesar_parque(park)
 
 if __name__ == "__main__":
     main()
